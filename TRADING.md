@@ -30,3 +30,16 @@ Stop-loss: 3% below entry
 Trailing stop: Use the 20-period SMA.
 # Risk Management:
 Position size: 3% of portfolio
+
+# Steps:
+Load ML predictions (LSTM from inference.py CSV output)
+Load Random Forest predictions
+Fetch historical stock data with technical indicators
+Implement Conservative and Aggressive strategies
+Simulate trades and track portfolio performance
+
+# Generate LSTM predictions first
+python inference.py --ticker 0005.HK --target_col SMA50_diff --start 2022-10-27 --end 2022-11-28
+
+# Run trading simulation
+python trading.py --ticker 0005.HK --start 2022-10-01 --end 2022-12-01 --strategy both

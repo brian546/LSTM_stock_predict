@@ -1,0 +1,574 @@
+"""
+Trading System with Conservative and Aggressive Strategies
+Integrates LSTM and Random Forest predictions with technical indicators
+"""
+
+import argparse
+import pandas as pd
+import numpy as np
+import yfinance as yf
+from datetime import datetime, timedelta
+import os
+from ta.trend import SMAIndicator, MACD
+from ta.momentum import RSIIndicator
+from ta.volatility import BollingerBands
+
+
+class TradingStrategy:
+    """Base class for trading strategies"""
+    
+    def __init__(self, ticker, start_date, end_date, initial_capital=100000, 
+                 lstm_predictions=None, rf_predictions=None):
+        self.ticker = ticker
+        self.start_date = start_date
+        self.end_date = end_date
+        self.initial_capital = initial_capital
+        self.capital = initial_capital
+        self.position = 0  # Number of shares held
+        self.entry_price = 0
+        self.trades = []
+        self.portfolio_value = []
+        
+        # Load data
+        self.df = self._fetch_data_with_indicators()
+        self.lstm_predictions = lstm_predictions
+        self.rf_predictions = rf_predictions
+        
+        # Merge ML predictions
+        self._merge_predictions()
+        
+    def _fetch_data_with_indicators(self):
+        """Fetch stock data and calculate technical indicators"""
+        # Fetch extra data for indicator calculation
+        buffer_start = (datetime.strptime(self.start_date, '%Y-%m-%d') - timedelta(days=300)).strftime('%Y-%m-%d')
+        df = yf.download(self.ticker, start=buffer_start, end=self.end_date, progress=False)
+        
+        if df.empty:
+            raise ValueError(f"No data available for {self.ticker}")
+        
+        # Handle MultiIndex columns from yfinance
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = [col[0] for col in df.columns]
+        
+        close = df['Close']
+        high = df['High']
+        low = df['Low']
+        
+        # Calculate SMAs
+        df['SMA10'] = SMAIndicator(close, window=10).sma_indicator()
+        df['SMA20'] = SMAIndicator(close, window=20).sma_indicator()
+        df['SMA50'] = SMAIndicator(close, window=50).sma_indicator()
+        df['SMA200'] = SMAIndicator(close, window=200).sma_indicator()
+        
+        # Calculate MACD
+        macd = MACD(close)
+        df['MACD'] = macd.macd()
+        df['MACD_signal'] = macd.macd_signal()
+        df['MACD_hist'] = macd.macd_diff()
+        
+        # Calculate RSI
+        df['RSI'] = RSIIndicator(close, window=14).rsi()
+        
+        # Calculate Bollinger Bands
+        bb = BollingerBands(close)
+        df['BB_upper'] = bb.bollinger_hband()
+        df['BB_middle'] = bb.bollinger_mavg()
+        df['BB_lower'] = bb.bollinger_lband()
+        
+        # Filter to trading period
+        df = df[self.start_date:self.end_date].copy()
+        
+        return df
+    
+    def _merge_predictions(self):
+        """Merge LSTM and Random Forest predictions with stock data"""
+        if self.lstm_predictions is not None:
+            # LSTM predictions should have Date index
+            self.df = self.df.join(self.lstm_predictions[['next_day_SMA50_diff']], how='left')
+            self.df.rename(columns={'next_day_SMA50_diff': 'LSTM_prediction'}, inplace=True)
+        
+        if self.rf_predictions is not None:
+            # Random Forest predictions
+            rf_df = self.rf_predictions.copy()
+            if 'Date' in rf_df.columns:
+                rf_df['Date'] = pd.to_datetime(rf_df['Date'])
+                rf_df.set_index('Date', inplace=True)
+            self.df = self.df.join(rf_df[['Random Forest', 'Next Price']], how='left')
+            self.df.rename(columns={'Random Forest': 'RF_prediction', 'Next Price': 'RF_actual'}, inplace=True)
+    
+    def _check_ml_bullish(self, row, prev_close):
+        """Check if ML models predict bullish movement"""
+        signals = 0
+        total = 0
+        
+        # LSTM prediction (SMA50_diff)
+        if pd.notna(row.get('LSTM_prediction')):
+            total += 1
+            if row['LSTM_prediction'] > 0:  # Positive SMA50_diff means bullish
+                signals += 1
+        
+        # Random Forest prediction
+        if pd.notna(row.get('RF_prediction')):
+            total += 1
+            if row['RF_prediction'] > prev_close:  # Predicts higher price
+                signals += 1
+        
+        return signals, total
+    
+    def _check_ml_bearish(self, row, current_price):
+        """Check if ML models predict bearish movement"""
+        signals = 0
+        total = 0
+        
+        # LSTM prediction
+        if pd.notna(row.get('LSTM_prediction')):
+            total += 1
+            if row['LSTM_prediction'] < 0:  # Negative SMA50_diff means bearish
+                signals += 1
+        
+        # Random Forest prediction
+        if pd.notna(row.get('RF_prediction')):
+            total += 1
+            if row['RF_prediction'] < current_price:  # Predicts lower price
+                signals += 1
+        
+        return signals, total
+    
+    def check_entry_signals(self, row, prev_row):
+        """Check for entry signals - to be overridden by subclasses"""
+        raise NotImplementedError
+    
+    def check_exit_signals(self, row, prev_row):
+        """Check for exit signals - to be overridden by subclasses"""
+        raise NotImplementedError
+    
+    def execute_trade(self, date, action, price, reason):
+        """Execute a trade"""
+        if action == 'BUY':
+            shares_to_buy = int((self.capital * self.position_size) / price)
+            if shares_to_buy > 0:
+                cost = shares_to_buy * price
+                self.capital -= cost
+                self.position += shares_to_buy
+                self.entry_price = price
+                self.trades.append({
+                    'Date': date,
+                    'Action': 'BUY',
+                    'Price': price,
+                    'Shares': shares_to_buy,
+                    'Capital': self.capital,
+                    'Position': self.position,
+                    'Reason': reason
+                })
+        
+        elif action == 'SELL' and self.position > 0:
+            proceeds = self.position * price
+            self.capital += proceeds
+            profit = (price - self.entry_price) * self.position
+            profit_pct = ((price - self.entry_price) / self.entry_price) * 100
+            
+            self.trades.append({
+                'Date': date,
+                'Action': 'SELL',
+                'Price': price,
+                'Shares': self.position,
+                'Capital': self.capital,
+                'Position': 0,
+                'Profit': profit,
+                'Profit_pct': profit_pct,
+                'Reason': reason
+            })
+            
+            self.position = 0
+            self.entry_price = 0
+    
+    def run_backtest(self):
+        """Run the trading strategy backtest"""
+        prev_row = None
+        
+        for date, row in self.df.iterrows():
+            current_price = row['Close']
+            
+            # Calculate portfolio value
+            portfolio_val = self.capital + (self.position * current_price)
+            self.portfolio_value.append({
+                'Date': date,
+                'Portfolio_Value': portfolio_val,
+                'Capital': self.capital,
+                'Position_Value': self.position * current_price,
+                'Shares': self.position
+            })
+            
+            # Skip first row
+            if prev_row is None:
+                prev_row = row
+                continue
+            
+            # Check for exit signals if we have a position
+            if self.position > 0:
+                # Check stop loss
+                if current_price <= self.entry_price * (1 - self.stop_loss_pct):
+                    self.execute_trade(date, 'SELL', current_price, 'Stop Loss')
+                    prev_row = row
+                    continue
+                
+                # Check trailing stop
+                if pd.notna(row[self.trailing_stop_sma]) and current_price < row[self.trailing_stop_sma]:
+                    self.execute_trade(date, 'SELL', current_price, 'Trailing Stop')
+                    prev_row = row
+                    continue
+                
+                # Check exit signals
+                exit_signal, reason = self.check_exit_signals(row, prev_row)
+                if exit_signal:
+                    self.execute_trade(date, 'SELL', current_price, reason)
+            
+            # Check for entry signals if we don't have a position
+            elif self.position == 0:
+                entry_signal, reason = self.check_entry_signals(row, prev_row)
+                if entry_signal:
+                    self.execute_trade(date, 'BUY', current_price, reason)
+            
+            prev_row = row
+        
+        # Close any open position at the end
+        if self.position > 0:
+            final_price = self.df.iloc[-1]['Close']
+            final_date = self.df.index[-1]
+            self.execute_trade(final_date, 'SELL', final_price, 'End of Period')
+        
+        return self._generate_report()
+    
+    def _generate_report(self):
+        """Generate performance report"""
+        portfolio_df = pd.DataFrame(self.portfolio_value)
+        trades_df = pd.DataFrame(self.trades)
+        
+        final_value = portfolio_df.iloc[-1]['Portfolio_Value']
+        total_return = ((final_value - self.initial_capital) / self.initial_capital) * 100
+        
+        # Calculate max drawdown
+        portfolio_df['Peak'] = portfolio_df['Portfolio_Value'].cummax()
+        portfolio_df['Drawdown'] = (portfolio_df['Portfolio_Value'] - portfolio_df['Peak']) / portfolio_df['Peak'] * 100
+        max_drawdown = portfolio_df['Drawdown'].min()
+        
+        # Trade statistics
+        buy_trades = trades_df[trades_df['Action'] == 'BUY']
+        sell_trades = trades_df[trades_df['Action'] == 'SELL']
+        
+        winning_trades = sell_trades[sell_trades['Profit'] > 0] if 'Profit' in sell_trades.columns else pd.DataFrame()
+        losing_trades = sell_trades[sell_trades['Profit'] <= 0] if 'Profit' in sell_trades.columns else pd.DataFrame()
+        
+        report = {
+            'initial_capital': self.initial_capital,
+            'final_value': final_value,
+            'total_return_pct': total_return,
+            'max_drawdown_pct': max_drawdown,
+            'total_trades': len(buy_trades),
+            'winning_trades': len(winning_trades),
+            'losing_trades': len(losing_trades),
+            'win_rate': (len(winning_trades) / len(sell_trades) * 100) if len(sell_trades) > 0 else 0,
+            'avg_profit': winning_trades['Profit'].mean() if len(winning_trades) > 0 else 0,
+            'avg_loss': losing_trades['Profit'].mean() if len(losing_trades) > 0 else 0,
+        }
+        
+        return report, portfolio_df, trades_df
+
+
+class ConservativeStrategy(TradingStrategy):
+    """Conservative trading strategy"""
+    
+    def __init__(self, *args, **kwargs):
+        self.position_size = 0.01  # 1% of portfolio
+        self.stop_loss_pct = 0.05  # 5% stop loss
+        self.trailing_stop_sma = 'SMA50'
+        super().__init__(*args, **kwargs)
+    
+    def check_entry_signals(self, row, prev_row):
+        """
+        Conservative Entry: Require at least 3 indicators + ML confirmation
+        1. Trend: Price > 200-day SMA and Price > 50-day SMA
+        2. MACD: crosses below zero first, then crosses above signal with positive histogram
+        3. Oversold: RSI < 40 or price touches lower Bollinger Band
+        4. ML: predicts price increase
+        """
+        signals = []
+        
+        # Skip if missing critical data
+        if pd.isna(row['SMA200']) or pd.isna(row['SMA50']):
+            return False, ""
+        
+        # 1. Trend confirmation
+        if row['Close'] > row['SMA200'] and row['Close'] > row['SMA50']:
+            signals.append('Trend')
+        
+        # 2. MACD momentum
+        if (pd.notna(prev_row['MACD']) and pd.notna(row['MACD']) and 
+            pd.notna(prev_row['MACD_signal']) and pd.notna(row['MACD_signal'])):
+            # MACD crosses above signal line with positive histogram
+            if (prev_row['MACD'] <= prev_row['MACD_signal'] and 
+                row['MACD'] > row['MACD_signal'] and 
+                row['MACD_hist'] > 0):
+                signals.append('MACD')
+        
+        # 3. Oversold condition
+        if pd.notna(row['RSI']) and row['RSI'] < 40:
+            signals.append('RSI_oversold')
+        elif pd.notna(row['BB_lower']) and row['Close'] <= row['BB_lower'] * 1.01:  # Within 1% of lower band
+            signals.append('BB_oversold')
+        
+        # 4. ML confirmation
+        ml_bullish, ml_total = self._check_ml_bullish(row, prev_row['Close'])
+        if ml_total > 0 and ml_bullish >= ml_total * 0.5:  # At least 50% of ML models agree
+            signals.append('ML_bullish')
+        
+        # Conservative: Need at least 3 signals including ML
+        if len(signals) >= 3 and 'ML_bullish' in signals:
+            return True, f"Conservative Entry: {', '.join(signals)}"
+        
+        return False, ""
+    
+    def check_exit_signals(self, row, prev_row):
+        """
+        Conservative Exit:
+        1. Take profits: RSI > 70 and price hits upper BB
+        2. MACD bearish crossover
+        3. ML predicts decrease
+        """
+        # 1. Take profit on overbought
+        if (pd.notna(row['RSI']) and row['RSI'] > 70 and 
+            pd.notna(row['BB_upper']) and row['Close'] >= row['BB_upper'] * 0.99):
+            return True, "Take Profit (RSI>70 + BB_upper)"
+        
+        # 2. MACD bearish crossover
+        if (pd.notna(prev_row['MACD']) and pd.notna(row['MACD']) and 
+            pd.notna(prev_row['MACD_signal']) and pd.notna(row['MACD_signal'])):
+            if prev_row['MACD'] >= prev_row['MACD_signal'] and row['MACD'] < row['MACD_signal']:
+                return True, "MACD Bearish Crossover"
+        
+        # 3. ML bearish signal
+        ml_bearish, ml_total = self._check_ml_bearish(row, row['Close'])
+        if ml_total > 0 and ml_bearish >= ml_total * 0.5:
+            return True, "ML Bearish Signal"
+        
+        return False, ""
+
+
+class AggressiveStrategy(TradingStrategy):
+    """Aggressive trading strategy"""
+    
+    def __init__(self, *args, **kwargs):
+        self.position_size = 0.03  # 3% of portfolio
+        self.stop_loss_pct = 0.03  # 3% stop loss
+        self.trailing_stop_sma = 'SMA20'
+        super().__init__(*args, **kwargs)
+    
+    def check_entry_signals(self, row, prev_row):
+        """
+        Aggressive Entry: Require at least 2 indicators + ML confirmation
+        Same conditions as conservative but more permissive
+        """
+        signals = []
+        
+        # Skip if missing critical data
+        if pd.isna(row['SMA200']) or pd.isna(row['SMA50']):
+            return False, ""
+        
+        # 1. Trend confirmation
+        if row['Close'] > row['SMA200'] and row['Close'] > row['SMA50']:
+            signals.append('Trend')
+        
+        # 2. MACD momentum
+        if (pd.notna(prev_row['MACD']) and pd.notna(row['MACD']) and 
+            pd.notna(prev_row['MACD_signal']) and pd.notna(row['MACD_signal'])):
+            if (prev_row['MACD'] <= prev_row['MACD_signal'] and 
+                row['MACD'] > row['MACD_signal'] and 
+                row['MACD_hist'] > 0):
+                signals.append('MACD')
+        
+        # 3. Oversold condition (more lenient)
+        if pd.notna(row['RSI']) and row['RSI'] < 45:  # Higher threshold
+            signals.append('RSI_oversold')
+        elif pd.notna(row['BB_lower']) and row['Close'] <= row['BB_lower'] * 1.02:
+            signals.append('BB_oversold')
+        
+        # 4. ML confirmation
+        ml_bullish, ml_total = self._check_ml_bullish(row, prev_row['Close'])
+        if ml_total > 0 and ml_bullish >= ml_total * 0.5:
+            signals.append('ML_bullish')
+        
+        # Aggressive: Need at least 2 signals including ML
+        if len(signals) >= 2 and 'ML_bullish' in signals:
+            return True, f"Aggressive Entry: {', '.join(signals)}"
+        
+        return False, ""
+    
+    def check_exit_signals(self, row, prev_row):
+        """
+        Aggressive Exit:
+        1. RSI > 70
+        2. MACD bearish crossover
+        3. Price closes below middle Bollinger Band
+        4. ML predicts decrease
+        """
+        # 1. Overbought
+        if pd.notna(row['RSI']) and row['RSI'] > 70:
+            return True, "Take Profit (RSI>70)"
+        
+        # 2. MACD bearish crossover
+        if (pd.notna(prev_row['MACD']) and pd.notna(row['MACD']) and 
+            pd.notna(prev_row['MACD_signal']) and pd.notna(row['MACD_signal'])):
+            if prev_row['MACD'] >= prev_row['MACD_signal'] and row['MACD'] < row['MACD_signal']:
+                return True, "MACD Bearish Crossover"
+        
+        # 3. Price below middle BB
+        if pd.notna(row['BB_middle']) and row['Close'] < row['BB_middle']:
+            return True, "Price Below BB Middle"
+        
+        # 4. ML bearish signal
+        ml_bearish, ml_total = self._check_ml_bearish(row, row['Close'])
+        if ml_total > 0 and ml_bearish >= ml_total * 0.5:
+            return True, "ML Bearish Signal"
+        
+        return False, ""
+
+
+def load_predictions(ticker, lstm_path=None, rf_path=None):
+    """Load LSTM and Random Forest predictions"""
+    lstm_pred = None
+    rf_pred = None
+    
+    # Load LSTM predictions
+    if lstm_path and os.path.exists(lstm_path):
+        lstm_pred = pd.read_csv(lstm_path, index_col=0, parse_dates=True)
+        print(f"Loaded LSTM predictions from {lstm_path}")
+    else:
+        # Try default path
+        default_lstm = f"predictions/{ticker}_predict.csv"
+        if os.path.exists(default_lstm):
+            lstm_pred = pd.read_csv(default_lstm, index_col=0, parse_dates=True)
+            print(f"Loaded LSTM predictions from {default_lstm}")
+    
+    # Load Random Forest predictions
+    if rf_path and os.path.exists(rf_path):
+        rf_pred = pd.read_csv(rf_path)
+        print(f"Loaded Random Forest predictions from {rf_path}")
+    else:
+        # Try default path
+        default_rf = f"random_forest/{ticker}_predict.csv"
+        if os.path.exists(default_rf):
+            rf_pred = pd.read_csv(default_rf)
+            print(f"Loaded Random Forest predictions from {default_rf}")
+    
+    return lstm_pred, rf_pred
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Trading System with ML Integration')
+    parser.add_argument('--ticker', type=str, required=True, help='Stock ticker (e.g., 0005.HK)')
+    parser.add_argument('--start', type=str, required=True, help='Start date (YYYY-MM-DD)')
+    parser.add_argument('--end', type=str, required=True, help='End date (YYYY-MM-DD)')
+    parser.add_argument('--strategy', type=str, choices=['conservative', 'aggressive', 'both'], 
+                        default='both', help='Trading strategy')
+    parser.add_argument('--capital', type=float, default=100000, help='Initial capital')
+    parser.add_argument('--lstm_path', type=str, default=None, help='Path to LSTM predictions CSV')
+    parser.add_argument('--rf_path', type=str, default=None, help='Path to Random Forest predictions CSV')
+    parser.add_argument('--output', type=str, default='trading_results', help='Output directory for results')
+    
+    args = parser.parse_args()
+    
+    print("="*80)
+    print(f"Trading System for {args.ticker}")
+    print(f"Period: {args.start} to {args.end}")
+    print(f"Initial Capital: ${args.capital:,.2f}")
+    print("="*80)
+    
+    # Load predictions
+    lstm_pred, rf_pred = load_predictions(args.ticker, args.lstm_path, args.rf_path)
+    
+    if lstm_pred is None and rf_pred is None:
+        print("\nWARNING: No ML predictions found. Trading will be based on technical indicators only.")
+    
+    # Create output directory
+    os.makedirs(args.output, exist_ok=True)
+    
+    strategies_to_run = []
+    if args.strategy in ['conservative', 'both']:
+        strategies_to_run.append(('Conservative', ConservativeStrategy))
+    if args.strategy in ['aggressive', 'both']:
+        strategies_to_run.append(('Aggressive', AggressiveStrategy))
+    
+    results_summary = []
+    
+    for strategy_name, StrategyClass in strategies_to_run:
+        print(f"\n{'='*80}")
+        print(f"Running {strategy_name} Strategy")
+        print(f"{'='*80}")
+        
+        try:
+            strategy = StrategyClass(
+                ticker=args.ticker,
+                start_date=args.start,
+                end_date=args.end,
+                initial_capital=args.capital,
+                lstm_predictions=lstm_pred,
+                rf_predictions=rf_pred
+            )
+            
+            report, portfolio_df, trades_df = strategy.run_backtest()
+            
+            # Print report
+            print(f"\n{strategy_name} Strategy Results:")
+            print("-" * 50)
+            print(f"Initial Capital:      ${report['initial_capital']:,.2f}")
+            print(f"Final Value:          ${report['final_value']:,.2f}")
+            print(f"Total Return:         {report['total_return_pct']:.2f}%")
+            print(f"Max Drawdown:         {report['max_drawdown_pct']:.2f}%")
+            print(f"Total Trades:         {report['total_trades']}")
+            print(f"Winning Trades:       {report['winning_trades']}")
+            print(f"Losing Trades:        {report['losing_trades']}")
+            print(f"Win Rate:             {report['win_rate']:.2f}%")
+            print(f"Avg Profit (wins):    ${report['avg_profit']:,.2f}")
+            print(f"Avg Loss (losses):    ${report['avg_loss']:,.2f}")
+            
+            # Save results
+            strategy_dir = os.path.join(args.output, f"{args.ticker}_{strategy_name.lower()}")
+            os.makedirs(strategy_dir, exist_ok=True)
+            
+            portfolio_df.to_csv(os.path.join(strategy_dir, 'portfolio_history.csv'))
+            trades_df.to_csv(os.path.join(strategy_dir, 'trades.csv'))
+            
+            # Save report
+            report_df = pd.DataFrame([report])
+            report_df.to_csv(os.path.join(strategy_dir, 'summary.csv'), index=False)
+            
+            print(f"\nResults saved to: {strategy_dir}/")
+            
+            results_summary.append({
+                'Strategy': strategy_name,
+                'Ticker': args.ticker,
+                'Initial_Capital': report['initial_capital'],
+                'Final_Value': report['final_value'],
+                'Return_pct': report['total_return_pct'],
+                'Max_Drawdown_pct': report['max_drawdown_pct'],
+                'Total_Trades': report['total_trades'],
+                'Win_Rate': report['win_rate']
+            })
+            
+        except Exception as e:
+            print(f"Error running {strategy_name} strategy: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Save combined summary
+    if results_summary:
+        summary_df = pd.DataFrame(results_summary)
+        summary_path = os.path.join(args.output, f"{args.ticker}_strategies_comparison.csv")
+        summary_df.to_csv(summary_path, index=False)
+        print(f"\n{'='*80}")
+        print(f"Strategy comparison saved to: {summary_path}")
+        print(f"{'='*80}")
+
+
+if __name__ == '__main__':
+    main()
