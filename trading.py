@@ -91,7 +91,10 @@ class TradingStrategy:
             # Random Forest predictions
             rf_df = self.rf_predictions.copy()
             if 'Date' in rf_df.columns:
-                rf_df['Date'] = pd.to_datetime(rf_df['Date'])
+                # Parse date with format from Random Forest CSV (e.g., "2022/10/27 0:00")
+                rf_df['Date'] = pd.to_datetime(rf_df['Date'], format='%Y/%m/%d %H:%M', errors='coerce')
+                # Drop rows with invalid dates (metadata rows)
+                rf_df = rf_df.dropna(subset=['Date'])
                 rf_df.set_index('Date', inplace=True)
             self.df = self.df.join(rf_df[['Random Forest', 'Next Price']], how='left')
             self.df.rename(columns={'Random Forest': 'RF_prediction', 'Next Price': 'RF_actual'}, inplace=True)
@@ -253,23 +256,38 @@ class TradingStrategy:
         max_drawdown = portfolio_df['Drawdown'].min()
         
         # Trade statistics
-        buy_trades = trades_df[trades_df['Action'] == 'BUY']
-        sell_trades = trades_df[trades_df['Action'] == 'SELL']
-        
-        winning_trades = sell_trades[sell_trades['Profit'] > 0] if 'Profit' in sell_trades.columns else pd.DataFrame()
-        losing_trades = sell_trades[sell_trades['Profit'] <= 0] if 'Profit' in sell_trades.columns else pd.DataFrame()
+        if len(trades_df) > 0:
+            buy_trades = trades_df[trades_df['Action'] == 'BUY']
+            sell_trades = trades_df[trades_df['Action'] == 'SELL']
+            
+            winning_trades = sell_trades[sell_trades['Profit'] > 0] if 'Profit' in sell_trades.columns and len(sell_trades) > 0 else pd.DataFrame()
+            losing_trades = sell_trades[sell_trades['Profit'] <= 0] if 'Profit' in sell_trades.columns and len(sell_trades) > 0 else pd.DataFrame()
+            
+            total_trades = len(buy_trades)
+            winning_count = len(winning_trades)
+            losing_count = len(losing_trades)
+            win_rate = (winning_count / len(sell_trades) * 100) if len(sell_trades) > 0 else 0
+            avg_profit = winning_trades['Profit'].mean() if winning_count > 0 else 0
+            avg_loss = losing_trades['Profit'].mean() if losing_count > 0 else 0
+        else:
+            total_trades = 0
+            winning_count = 0
+            losing_count = 0
+            win_rate = 0
+            avg_profit = 0
+            avg_loss = 0
         
         report = {
             'initial_capital': self.initial_capital,
             'final_value': final_value,
             'total_return_pct': total_return,
             'max_drawdown_pct': max_drawdown,
-            'total_trades': len(buy_trades),
-            'winning_trades': len(winning_trades),
-            'losing_trades': len(losing_trades),
-            'win_rate': (len(winning_trades) / len(sell_trades) * 100) if len(sell_trades) > 0 else 0,
-            'avg_profit': winning_trades['Profit'].mean() if len(winning_trades) > 0 else 0,
-            'avg_loss': losing_trades['Profit'].mean() if len(losing_trades) > 0 else 0,
+            'total_trades': total_trades,
+            'winning_trades': winning_count,
+            'losing_trades': losing_count,
+            'win_rate': win_rate,
+            'avg_profit': avg_profit,
+            'avg_loss': avg_loss,
         }
         
         return report, portfolio_df, trades_df
@@ -446,18 +464,19 @@ def load_predictions(ticker, lstm_path=None, rf_path=None):
         # Try default path
         default_lstm = f"predictions/{ticker}_predict.csv"
         if os.path.exists(default_lstm):
-            lstm_pred = pd.read_csv(default_lstm, index_col=0, parse_dates=True)
+            lstm_pred = pd.read_csv(default_lstm, index_col=0)
+            lstm_pred.index = pd.to_datetime(lstm_pred.index, errors='coerce')
             print(f"Loaded LSTM predictions from {default_lstm}")
     
-    # Load Random Forest predictions
+    # Load Random Forest predictions (skip metadata rows)
     if rf_path and os.path.exists(rf_path):
-        rf_pred = pd.read_csv(rf_path)
+        rf_pred = pd.read_csv(rf_path, skiprows=[1, 2])  # Skip metadata rows
         print(f"Loaded Random Forest predictions from {rf_path}")
     else:
         # Try default path
         default_rf = f"random_forest/{ticker}_predict.csv"
         if os.path.exists(default_rf):
-            rf_pred = pd.read_csv(default_rf)
+            rf_pred = pd.read_csv(default_rf, skiprows=[1, 2])  # Skip metadata rows
             print(f"Loaded Random Forest predictions from {default_rf}")
     
     return lstm_pred, rf_pred

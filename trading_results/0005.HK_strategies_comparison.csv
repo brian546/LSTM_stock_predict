@@ -1,0 +1,2 @@
+Strategy,Ticker,Initial_Capital,Final_Value,Return_pct,Max_Drawdown_pct,Total_Trades,Win_Rate
+Aggressive,0005.HK,100000,100096.81653213501,0.09681653213500976,-0.047623439788818354,3,66.66666666666666
