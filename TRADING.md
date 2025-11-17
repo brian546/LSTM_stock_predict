@@ -43,3 +43,9 @@ python inference.py --ticker 0005.HK --target_col SMA50_diff --start 2022-10-27 
 
 # Run trading simulation
 python trading.py --ticker 0005.HK --start 2022-10-01 --end 2022-12-01 --strategy both
+
+conda run -n trading python trading.py --ticker 0005.HK --start 2022-10-01 --end 2023-12-28 --strategy both
+conda run -n trading python trading.py --ticker 0002.HK --start 2022-10-01 --end 2023-12-28 --strategy both
+conda run -n trading python trading.py --ticker 3690.HK --start 2022-10-01 --end 2023-12-28 --strategy both
+conda run -n trading python trading.py --ticker 0288.HK --start 2022-10-01 --end 2023-12-28 --strategy both
+conda run -n trading python trading.py --ticker 2318.HK --start 2022-10-01 --end 2023-12-28 --strategy both

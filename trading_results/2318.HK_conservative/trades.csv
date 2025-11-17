@@ -1,0 +1,3 @@
+,Date,Action,Price,Shares,Capital,Position,Reason,Profit,Profit_pct
+0,2023-01-04,BUY,55.70000076293945,17,99053.09998703003,17,"Conservative Entry: Trend, MACD, ML_bullish",,
+1,2023-01-06,SELL,56.349998474121094,17,100011.04996109009,0,Take Profit (RSI>70 + BB_upper),11.04996109008789,1.1669617635160305

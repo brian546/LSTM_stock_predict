@@ -9,6 +9,7 @@ import numpy as np
 import yfinance as yf
 from datetime import datetime, timedelta
 import os
+import subprocess
 from ta.trend import SMAIndicator, MACD
 from ta.momentum import RSIIndicator
 from ta.volatility import BollingerBands
@@ -41,7 +42,7 @@ class TradingStrategy:
         """Fetch stock data and calculate technical indicators"""
         # Fetch extra data for indicator calculation
         buffer_start = (datetime.strptime(self.start_date, '%Y-%m-%d') - timedelta(days=300)).strftime('%Y-%m-%d')
-        df = yf.download(self.ticker, start=buffer_start, end=self.end_date, progress=False)
+        df = yf.download(self.ticker, start=buffer_start, end=self.end_date, progress=False, auto_adjust=False)
         
         if df.empty:
             raise ValueError(f"No data available for {self.ticker}")
@@ -451,21 +452,52 @@ class AggressiveStrategy(TradingStrategy):
         return False, ""
 
 
-def load_predictions(ticker, lstm_path=None, rf_path=None):
+def load_predictions(ticker, start_date, end_date, lstm_path=None, rf_path=None, generate_lstm=True):
     """Load LSTM and Random Forest predictions"""
     lstm_pred = None
     rf_pred = None
     
-    # Load LSTM predictions
+    # Load or generate LSTM predictions
     if lstm_path and os.path.exists(lstm_path):
-        lstm_pred = pd.read_csv(lstm_path, index_col=0, parse_dates=True)
+        lstm_pred = pd.read_csv(lstm_path, index_col=0)
+        lstm_pred.index = pd.to_datetime(lstm_pred.index, format='%Y-%m-%d', errors='coerce')
         print(f"Loaded LSTM predictions from {lstm_path}")
+    elif generate_lstm:
+        # Generate LSTM predictions by calling inference.py
+        print(f"\nGenerating LSTM predictions for {ticker}...")
+        default_lstm = f"predictions/{ticker}_predict.csv"
+        
+        try:
+            # Call inference.py with appropriate parameters
+            cmd = [
+                'python', 'inference.py',
+                '--ticker', ticker,
+                '--target_col', 'SMA50_diff',
+                '--start', start_date,
+                '--end', end_date
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            print("LSTM prediction generation completed.")
+            
+            # Load the generated predictions
+            if os.path.exists(default_lstm):
+                lstm_pred = pd.read_csv(default_lstm, index_col=0)
+                lstm_pred.index = pd.to_datetime(lstm_pred.index, format='%Y-%m-%d', errors='coerce')
+                print(f"Loaded generated LSTM predictions from {default_lstm}")
+            else:
+                print(f"Warning: Expected LSTM predictions file not found at {default_lstm}")
+        except subprocess.CalledProcessError as e:
+            print(f"Error generating LSTM predictions: {e}")
+            print(f"stderr: {e.stderr}")
+        except Exception as e:
+            print(f"Error running inference.py: {e}")
     else:
-        # Try default path
+        # Try default path without generation
         default_lstm = f"predictions/{ticker}_predict.csv"
         if os.path.exists(default_lstm):
             lstm_pred = pd.read_csv(default_lstm, index_col=0)
-            lstm_pred.index = pd.to_datetime(lstm_pred.index, errors='coerce')
+            lstm_pred.index = pd.to_datetime(lstm_pred.index, format='%Y-%m-%d', errors='coerce')
             print(f"Loaded LSTM predictions from {default_lstm}")
     
     # Load Random Forest predictions (skip metadata rows)
@@ -492,6 +524,7 @@ def main():
     parser.add_argument('--capital', type=float, default=100000, help='Initial capital')
     parser.add_argument('--lstm_path', type=str, default=None, help='Path to LSTM predictions CSV')
     parser.add_argument('--rf_path', type=str, default=None, help='Path to Random Forest predictions CSV')
+    parser.add_argument('--no_generate_lstm', action='store_true', help='Skip automatic LSTM generation (only load existing)')
     parser.add_argument('--output', type=str, default='trading_results', help='Output directory for results')
     
     args = parser.parse_args()
@@ -502,8 +535,15 @@ def main():
     print(f"Initial Capital: ${args.capital:,.2f}")
     print("="*80)
     
-    # Load predictions
-    lstm_pred, rf_pred = load_predictions(args.ticker, args.lstm_path, args.rf_path)
+    # Load predictions (with automatic generation if needed)
+    lstm_pred, rf_pred = load_predictions(
+        ticker=args.ticker,
+        start_date=args.start,
+        end_date=args.end,
+        lstm_path=args.lstm_path,
+        rf_path=args.rf_path,
+        generate_lstm=not args.no_generate_lstm
+    )
     
     if lstm_pred is None and rf_pred is None:
         print("\nWARNING: No ML predictions found. Trading will be based on technical indicators only.")
