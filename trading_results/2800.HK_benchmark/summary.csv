@@ -1,0 +1,2 @@
+ticker,start_date,end_date,initial_capital,position_size_pct,investment_amount,initial_price,final_price,shares,remaining_cash,final_value,total_return_pct,annualized_return_pct,max_drawdown_pct,trading_days
+2800.HK,2022-10-27,2025-10-23,20000.0,3.0,600.0,16.06999969482422,26.600000381469727,37.33665285589559,19400.0,20393.154980209627,1.9657749010481347,0.653253851649005,-1.4141465942727853,734
