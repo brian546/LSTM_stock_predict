@@ -41,8 +41,8 @@ def calculate_buy_and_hold_benchmark(ticker, start_date, end_date, initial_capit
     first_price = df['Close'].iloc[0]
     last_price = df['Close'].iloc[-1]
     
-    # Calculate number of shares we can buy (limited to 3% position size like aggressive strategy)
-    position_size = 0.03  # 3% of portfolio
+    # Calculate number of shares we can buy (limited to 50% position size like conservative strategy)
+    position_size = 0.50  # 50% of portfolio
     investment_amount = initial_capital * position_size
     shares = investment_amount / first_price
     remaining_cash = initial_capital - investment_amount

@@ -312,7 +312,7 @@ class ConservativeStrategy(TradingStrategy):
     """Conservative trading strategy"""
     
     def __init__(self, *args, **kwargs):
-        self.position_size = 0.01  # 1% of portfolio
+        self.position_size = 0.50  # 50% of portfolio
         self.stop_loss_pct = 0.05  # 5% stop loss
         self.trailing_stop_sma = 'SMA50'
         super().__init__(*args, **kwargs)
@@ -399,9 +399,9 @@ class AggressiveStrategy(TradingStrategy):
     """Aggressive trading strategy"""
     
     def __init__(self, *args, **kwargs):
-        self.position_size = 0.03  # 3% of portfolio
-        self.stop_loss_pct = 0.03  # 3% stop loss
-        self.trailing_stop_sma = 'SMA20'
+        self.position_size = 0.70  # 70% of portfolio
+        self.stop_loss_pct = 0.05  # 5% stop loss
+        self.trailing_stop_sma = 'SMA50'
         super().__init__(*args, **kwargs)
     
     def check_entry_signals(self, row, prev_row):
