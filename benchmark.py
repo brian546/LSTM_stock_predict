@@ -174,6 +174,7 @@ def main():
             'Return_pct': summary['total_return_pct'],
             'Annualized_Return_pct': summary['annualized_return_pct'],
             'Max_Drawdown_pct': summary['max_drawdown_pct'],
+            'Std_Dev': summary['std_dev'],
             'Total_Trades': 1  # Buy and hold = 1 trade (buy at start)
         }]
         
@@ -198,6 +199,7 @@ def main():
                         'Return_pct': strategy_df['total_return_pct'].iloc[0],
                         'Annualized_Return_pct': annualized,
                         'Max_Drawdown_pct': strategy_df['max_drawdown_pct'].iloc[0],
+                        'Std_Dev': strategy_df['std_dev'].iloc[0] if 'std_dev' in strategy_df.columns else 0.0,
                         'Total_Trades': strategy_df['total_trades'].iloc[0]
                     })
         
@@ -208,13 +210,13 @@ def main():
         
         # Print comparison table
         print("\nPerformance Comparison:")
-        print("-" * 120)
-        print(f"{'Strategy':<35} {'Return':<12} {'Ann. Return':<12} {'Max DD':<12} {'Trades':<10}")
-        print("-" * 120)
+        print("-" * 135)
+        print(f"{'Strategy':<35} {'Return':<12} {'Ann. Return':<12} {'Max DD':<12} {'Std Dev':<12} {'Trades':<10}")
+        print("-" * 135)
         
         for _, row in comparison_df.iterrows():
             print(f"{row['Strategy']:<35} {row['Return_pct']:>10.2f}%  {row['Annualized_Return_pct']:>10.2f}%  "
-                  f"{row['Max_Drawdown_pct']:>10.2f}%  {row['Total_Trades']:>8.0f}")
+                  f"{row['Max_Drawdown_pct']:>10.2f}%  {row['Std_Dev']:>10.2f}%  {row['Total_Trades']:>8.0f}")
         
         # Save comparison
         comparison_path = os.path.join(args.output, f'benchmark_comparison_{args.ticker}.csv')

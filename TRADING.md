@@ -13,7 +13,7 @@ Accelerate exit if ML predicts a price decrease (bearish signal) even if indicat
 Stop-loss: 5% below entry
 Trailing stop: Use the 50-period SMA.
 # Risk Management:
-Position size: 1% of portfolio
+Portion size: 50% of portfolio
 
 ## Aggressive
 Here, the ML model enables more proactive entries, using its predictions for timing or overriding minor indicator weaknesses in strong trends.
@@ -27,9 +27,9 @@ Require at least 2 indicators/ML aligning (up from 1) to maintain aggressiveness
 Take profits on RSI >70 or MACD bearish crossover, or when price closes below the lower Bollinger Band.
 Accelerate exit if ML predicts a price decrease (bearish signal) even if indicators are mixed.
 Stop-loss: 3% below entry 
-Trailing stop: Use the 20-period SMA.
+Trailing stop: Use the 50-period SMA.
 # Risk Management:
-Position size: 3% of portfolio
+Portion size: 70% of portfolio
 
 # Steps:
 Load ML predictions (LSTM from inference.py CSV output)
