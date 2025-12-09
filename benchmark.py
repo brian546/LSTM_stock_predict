@@ -104,6 +104,129 @@ def calculate_buy_and_hold_benchmark(ticker, start_date, end_date, initial_capit
     return portfolio_df, summary
 
 
+def calculate_equal_weight_benchmark(tickers, start_date, end_date, initial_capital):
+    """
+    Calculate equal-weight multi-stock benchmark performance
+    Each stock gets equal allocation of initial capital
+    
+    Args:
+        tickers: List of stock tickers
+        start_date: Start date (YYYY-MM-DD)
+        end_date: End date (YYYY-MM-DD)
+        initial_capital: Total initial investment amount
+    
+    Returns:
+        portfolio_df: Daily portfolio values
+        summary: Performance summary
+    """
+    print(f"\nFetching data for equal-weight portfolio: {', '.join(tickers)}...")
+    
+    capital_per_stock = initial_capital / len(tickers)
+    position_size = 0.50  # 50% of allocation per stock (like conservative strategy)
+    
+    all_stock_data = []
+    stock_positions = []
+    
+    # Fetch data for each stock
+    for ticker in tickers:
+        df = yf.download(ticker, start=start_date, end=end_date, progress=False, auto_adjust=False)
+        
+        if df.empty:
+            print(f"Warning: No data available for {ticker}")
+            continue
+        
+        # Handle MultiIndex columns
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = [col[0] for col in df.columns]
+        
+        df['Ticker'] = ticker
+        
+        # Calculate position for this stock
+        first_price = df['Close'].iloc[0]
+        investment_amount = capital_per_stock * position_size
+        shares = investment_amount / first_price
+        remaining_cash = capital_per_stock - investment_amount
+        
+        stock_positions.append({
+            'ticker': ticker,
+            'shares': shares,
+            'initial_price': first_price,
+            'investment_amount': investment_amount,
+            'remaining_cash': remaining_cash
+        })
+        
+        all_stock_data.append(df)
+    
+    if not all_stock_data:
+        raise ValueError("No data available for any of the specified tickers")
+    
+    # Get common date range
+    all_dates = set(all_stock_data[0].index)
+    for df in all_stock_data[1:]:
+        all_dates = all_dates.intersection(set(df.index))
+    all_dates = sorted(list(all_dates))
+    
+    # Calculate daily portfolio values
+    portfolio_values = []
+    for date in all_dates:
+        total_position_value = 0
+        total_cash = 0
+        
+        for i, df in enumerate(all_stock_data):
+            if date in df.index:
+                current_price = df.loc[date, 'Close']
+                position_value = stock_positions[i]['shares'] * current_price
+                total_position_value += position_value
+                total_cash += stock_positions[i]['remaining_cash']
+        
+        portfolio_value = total_cash + total_position_value
+        portfolio_values.append({
+            'Date': date,
+            'Total_Position_Value': total_position_value,
+            'Total_Cash': total_cash,
+            'Portfolio_Value': portfolio_value
+        })
+    
+    portfolio_df = pd.DataFrame(portfolio_values)
+    
+    # Calculate performance metrics
+    final_value = portfolio_df.iloc[-1]['Portfolio_Value']
+    total_return_pct = ((final_value - initial_capital) / initial_capital) * 100
+    
+    # Calculate max drawdown
+    portfolio_df['Peak'] = portfolio_df['Portfolio_Value'].cummax()
+    portfolio_df['Drawdown'] = (portfolio_df['Portfolio_Value'] - portfolio_df['Peak']) / portfolio_df['Peak'] * 100
+    max_drawdown_pct = portfolio_df['Drawdown'].min()
+    
+    # Calculate standard deviation of daily returns
+    portfolio_df['Daily_Return'] = portfolio_df['Portfolio_Value'].pct_change() * 100
+    std_dev = portfolio_df['Daily_Return'].std()
+    
+    # Calculate annualized return
+    days = (portfolio_df.iloc[-1]['Date'] - portfolio_df.iloc[0]['Date']).days
+    years = days / 365.25
+    annualized_return = ((final_value / initial_capital) ** (1 / years) - 1) * 100 if years > 0 else 0
+    
+    summary = {
+        'tickers': ', '.join(tickers),
+        'num_stocks': len(tickers),
+        'start_date': portfolio_df.iloc[0]['Date'].strftime('%Y-%m-%d'),
+        'end_date': portfolio_df.iloc[-1]['Date'].strftime('%Y-%m-%d'),
+        'initial_capital': initial_capital,
+        'capital_per_stock': capital_per_stock,
+        'position_size_pct': position_size * 100,
+        'stock_positions': stock_positions,
+        'final_value': final_value,
+        'total_return_pct': total_return_pct,
+        'annualized_return_pct': annualized_return,
+        'max_drawdown_pct': max_drawdown_pct,
+        'std_dev': std_dev,
+        'trading_days': len(portfolio_df)
+    }
+    
+    return portfolio_df, summary
+
+
 def main():
     parser = argparse.ArgumentParser(description='Buy and Hold Benchmark Strategy')
     parser.add_argument('--ticker', type=str, default='2800.HK', 
@@ -114,6 +237,8 @@ def main():
     parser.add_argument('--output', type=str, default='trading_results', help='Output directory')
     parser.add_argument('--compare', type=str, nargs='*', 
                         help='Tickers to compare with (e.g., 0005.HK 0002.HK)')
+    parser.add_argument('--equal-weight', type=str, nargs='*',
+                        help='Create equal-weight benchmark with these tickers (e.g., 0002.HK 0005.HK 0288.HK 2318.HK 3690.HK)')
     
     args = parser.parse_args()
     
@@ -160,6 +285,63 @@ def main():
     
     print(f"\nResults saved to: {benchmark_dir}/")
     
+    # Calculate equal-weight benchmark if specified
+    equal_weight_summary = None
+    if args.equal_weight:
+        print(f"\n{'='*80}")
+        print(f"Equal-Weight Benchmark (5 Stocks)")
+        print(f"{'='*80}")
+        
+        equal_weight_portfolio_df, equal_weight_summary = calculate_equal_weight_benchmark(
+            tickers=args.equal_weight,
+            start_date=args.start,
+            end_date=args.end,
+            initial_capital=args.capital
+        )
+        
+        # Print summary
+        print(f"\nEqual-Weight Portfolio Results:")
+        print("-" * 50)
+        print(f"Stocks:               {equal_weight_summary['tickers']}")
+        print(f"Number of Stocks:     {equal_weight_summary['num_stocks']}")
+        print(f"Trading Period:       {equal_weight_summary['start_date']} to {equal_weight_summary['end_date']}")
+        print(f"Initial Capital:      ${equal_weight_summary['initial_capital']:,.2f}")
+        print(f"Capital per Stock:    ${equal_weight_summary['capital_per_stock']:,.2f}")
+        print(f"Position Size:        {equal_weight_summary['position_size_pct']:.1f}% per stock")
+        print(f"\nStock Positions:")
+        for pos in equal_weight_summary['stock_positions']:
+            print(f"  {pos['ticker']:>10}: {pos['shares']:>8.2f} shares @ ${pos['initial_price']:>8.2f} (${pos['investment_amount']:>10,.2f} invested, ${pos['remaining_cash']:>10,.2f} cash)")
+        print(f"\nFinal Value:          ${equal_weight_summary['final_value']:,.2f}")
+        print(f"Total Return:         {equal_weight_summary['total_return_pct']:.2f}%")
+        print(f"Annualized Return:    {equal_weight_summary['annualized_return_pct']:.2f}%")
+        print(f"Max Drawdown:         {equal_weight_summary['max_drawdown_pct']:.2f}%")
+        print(f"Std Dev (daily):      {equal_weight_summary['std_dev']:.2f}%")
+        print(f"Trading Days:         {equal_weight_summary['trading_days']}")
+        
+        # Save results
+        equal_weight_dir = os.path.join(args.output, "equal_weight_benchmark")
+        os.makedirs(equal_weight_dir, exist_ok=True)
+        
+        equal_weight_portfolio_df.to_csv(os.path.join(equal_weight_dir, 'portfolio_history.csv'), index=False)
+        
+        equal_weight_summary_df = pd.DataFrame([{
+            'tickers': equal_weight_summary['tickers'],
+            'num_stocks': equal_weight_summary['num_stocks'],
+            'start_date': equal_weight_summary['start_date'],
+            'end_date': equal_weight_summary['end_date'],
+            'initial_capital': equal_weight_summary['initial_capital'],
+            'capital_per_stock': equal_weight_summary['capital_per_stock'],
+            'final_value': equal_weight_summary['final_value'],
+            'total_return_pct': equal_weight_summary['total_return_pct'],
+            'annualized_return_pct': equal_weight_summary['annualized_return_pct'],
+            'max_drawdown_pct': equal_weight_summary['max_drawdown_pct'],
+            'std_dev': equal_weight_summary['std_dev'],
+            'trading_days': equal_weight_summary['trading_days']
+        }])
+        equal_weight_summary_df.to_csv(os.path.join(equal_weight_dir, 'summary.csv'), index=False)
+        
+        print(f"\nEqual-weight results saved to: {equal_weight_dir}/")
+    
     # Compare with trading strategies if specified
     if args.compare:
         print(f"\n{'='*80}")
@@ -177,6 +359,20 @@ def main():
             'Std_Dev': summary['std_dev'],
             'Total_Trades': 1  # Buy and hold = 1 trade (buy at start)
         }]
+        
+        # Add equal-weight benchmark to comparison if available
+        if equal_weight_summary:
+            comparison_data.append({
+                'Strategy': 'Equal-Weight Benchmark (5 stocks)',
+                'Ticker': equal_weight_summary['tickers'],
+                'Initial_Capital': equal_weight_summary['initial_capital'],
+                'Final_Value': equal_weight_summary['final_value'],
+                'Return_pct': equal_weight_summary['total_return_pct'],
+                'Annualized_Return_pct': equal_weight_summary['annualized_return_pct'],
+                'Max_Drawdown_pct': equal_weight_summary['max_drawdown_pct'],
+                'Std_Dev': equal_weight_summary['std_dev'],
+                'Total_Trades': len(args.equal_weight)  # One buy per stock
+            })
         
         # Load trading strategy results
         for ticker in args.compare:

@@ -49,5 +49,7 @@ conda run -n trading python trading.py --ticker 0002.HK --start 2022-10-27 --end
 conda run -n trading python trading.py --ticker 3690.HK --start 2022-10-27 --end 2025-10-27 --strategy both --capital 20000
 conda run -n trading python trading.py --ticker 0288.HK --start 2022-10-27 --end 2025-10-27 --strategy both --capital 20000
 conda run -n trading python trading.py --ticker 2318.HK --start 2022-10-27 --end 2025-10-27 --strategy both --capital 20000
-conda run -n trading python benchmark.py --ticker 2800.HK --start 2022-10-27 --end 2025-10-27 --capital 20000
-conda run -n trading python benchmark.py --ticker 2800.HK --start 2022-10-27 --end 2025-10-27 --capital 20000 --compare 0005.HK 0002.HK 3690.HK 0288.HK 2318.HK
+conda run -n trading python benchmark.py --ticker 2800.HK --start 2022-10-27 --end 2025-10-27 --capital 100000 --equal-weight 0002.HK 0005.HK 0288.HK 2318.HK 3690.HK --compare 0005.HK 0002.HK 3690.HK 0288.HK 2318.HK
+
+# Generate aggregated comparison with both benchmarks
+conda run -n trading python compare_portfolio_aggregated.py --benchmark 2800.HK --tickers 0002.HK 0005.HK 0288.HK 2318.HK 3690.HK --capital-per-stock 20000

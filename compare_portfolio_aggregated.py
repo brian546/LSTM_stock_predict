@@ -37,6 +37,19 @@ def load_benchmark_data(output_dir, benchmark_ticker):
     return df[['Date', 'Portfolio_Value']]
 
 
+def load_equal_weight_benchmark_data(output_dir):
+    """Load equal-weight benchmark portfolio history"""
+    benchmark_dir = os.path.join(output_dir, "equal_weight_benchmark")
+    history_file = os.path.join(benchmark_dir, 'portfolio_history.csv')
+    
+    if not os.path.exists(history_file):
+        return None
+    
+    df = pd.read_csv(history_file)
+    df['Date'] = pd.to_datetime(df['Date'], format='%Y-%m-%d')
+    return df[['Date', 'Portfolio_Value']]
+
+
 def aggregate_strategies(all_strategy_data, strategy_type):
     """Aggregate multiple strategies by date"""
     if not all_strategy_data:
@@ -57,16 +70,17 @@ def aggregate_strategies(all_strategy_data, strategy_type):
     return merged[['Date', 'Total_Portfolio_Value']].sort_values('Date').reset_index(drop=True)
 
 
-def plot_aggregated_comparison(benchmark_df, conservative_df, aggressive_df, 
-                               total_capital, output_path):
-    """Create comparison line chart for aggregated portfolios"""
+def plot_single_benchmark_comparison(benchmark_df, benchmark_label, benchmark_color,
+                                     conservative_df, aggressive_df, 
+                                     total_capital, output_path, value_column='Total_Portfolio_Value'):
+    """Create comparison line chart with a single benchmark"""
     plt.figure(figsize=(16, 10))
     
-    # Plot benchmark (black, thickest)
+    # Plot benchmark (thickest)
     if benchmark_df is not None:
-        plt.plot(benchmark_df['Date'], benchmark_df['Total_Portfolio_Value'], 
-                label='Benchmark (2800.HK)', 
-                color='#000000', linewidth=3.5, alpha=0.9, zorder=10)
+        plt.plot(benchmark_df['Date'], benchmark_df[value_column], 
+                label=benchmark_label, 
+                color=benchmark_color, linewidth=3.5, alpha=0.9, zorder=10)
     
     # Plot conservative portfolio (blue, medium)
     if conservative_df is not None:
@@ -85,7 +99,8 @@ def plot_aggregated_comparison(benchmark_df, conservative_df, aggressive_df,
                alpha=0.6, label=f'Initial Capital (${total_capital:,.0f})')
     
     # Formatting
-    plt.title('Aggregated Portfolio Comparison: Benchmark vs Conservative vs Aggressive\n(Each portfolio: 5 stocks × $20,000 = $100,000)', 
+    benchmark_name = benchmark_label.split('(')[0].strip()
+    plt.title(f'Aggregated Portfolio Comparison: {benchmark_name} vs Conservative vs Aggressive\n(Each portfolio: 5 stocks × $20,000 = $100,000)', 
               fontsize=16, fontweight='bold', pad=20)
     plt.xlabel('Date', fontsize=13)
     plt.ylabel('Total Portfolio Value ($)', fontsize=13)
@@ -109,26 +124,26 @@ def plot_aggregated_comparison(benchmark_df, conservative_df, aggressive_df,
     plt.close()
 
 
-def calculate_portfolio_stats(df, initial_capital, portfolio_name):
+def calculate_portfolio_stats(df, initial_capital, portfolio_name, value_column='Total_Portfolio_Value'):
     """Calculate statistics for a portfolio"""
     if df is None or df.empty:
         return None
     
-    initial_value = df['Total_Portfolio_Value'].iloc[0]
-    final_value = df['Total_Portfolio_Value'].iloc[-1]
-    max_value = df['Total_Portfolio_Value'].max()
-    min_value = df['Total_Portfolio_Value'].min()
+    initial_value = df[value_column].iloc[0]
+    final_value = df[value_column].iloc[-1]
+    max_value = df[value_column].max()
+    min_value = df[value_column].min()
     
     total_return = ((final_value - initial_capital) / initial_capital) * 100
     max_gain = ((max_value - initial_capital) / initial_capital) * 100
     max_loss = ((min_value - initial_capital) / initial_capital) * 100
     
     # Calculate drawdown
-    peak = df['Total_Portfolio_Value'].cummax()
-    drawdown = ((df['Total_Portfolio_Value'] - peak) / peak * 100).min()
+    peak = df[value_column].cummax()
+    drawdown = ((df[value_column] - peak) / peak * 100).min()
     
     # Calculate daily standard deviation
-    returns = df['Total_Portfolio_Value'].pct_change().dropna()
+    returns = df[value_column].pct_change().dropna()
     std_dev = (returns * 100).std()  # Daily std dev as percentage
     
     # Calculate volatility (annualized)
@@ -181,22 +196,32 @@ def main():
     print(f"Total capital: ${total_capital:,.2f}")
     print("="*80)
     
-    # Load and scale benchmark data to match total capital
+    # Load benchmark data (no scaling needed - already at 100,000)
     print(f"\nLoading benchmark data: {args.benchmark}")
     benchmark_original = load_benchmark_data(args.output, args.benchmark)
     
     if benchmark_original is not None:
-        # Scale benchmark from 20,000 to 100,000 (5x)
-        scale_factor = total_capital / args.capital_per_stock
+        # No scaling - benchmark was created with same total capital (100,000)
         benchmark_df = benchmark_original.copy()
-        benchmark_df['Total_Portfolio_Value'] = benchmark_df['Portfolio_Value'] * scale_factor
+        benchmark_df['Total_Portfolio_Value'] = benchmark_df['Portfolio_Value']
         benchmark_df = benchmark_df[['Date', 'Total_Portfolio_Value']]
-        print(f"✓ Benchmark loaded and scaled: {len(benchmark_df)} days")
+        print(f"✓ Benchmark loaded: {len(benchmark_df)} days")
         print(f"  Initial: ${benchmark_df['Total_Portfolio_Value'].iloc[0]:,.2f}")
         print(f"  Final: ${benchmark_df['Total_Portfolio_Value'].iloc[-1]:,.2f}")
     else:
         print(f"✗ Benchmark not found")
         benchmark_df = None
+    
+    # Load equal-weight benchmark (already at correct scale)
+    print(f"\nLoading equal-weight benchmark data:")
+    equal_weight_df = load_equal_weight_benchmark_data(args.output)
+    
+    if equal_weight_df is not None:
+        print(f"✓ Equal-weight benchmark loaded: {len(equal_weight_df)} days")
+        print(f"  Initial: ${equal_weight_df['Portfolio_Value'].iloc[0]:,.2f}")
+        print(f"  Final: ${equal_weight_df['Portfolio_Value'].iloc[-1]:,.2f}")
+    else:
+        print(f"✗ Equal-weight benchmark not found")
     
     # Load conservative strategies
     print(f"\nLoading Conservative strategies:")
@@ -240,56 +265,114 @@ def main():
         aggressive_df = None
         print(f"\n✗ No aggressive strategies found")
     
-    # Generate plot
-    output_path = os.path.join(args.output, 'aggregated_portfolio_comparison.png')
-    plot_aggregated_comparison(benchmark_df, conservative_df, aggressive_df, 
-                               total_capital, output_path)
+    # Generate two separate outputs - one for each benchmark
     
-    # Generate statistics
+    # 1. Generate comparison with 2800.HK benchmark
     print("\n" + "="*80)
-    print("Performance Statistics")
+    print("Generating Comparison #1: 2800.HK Benchmark")
     print("="*80)
     
-    stats_list = []
-    
     if benchmark_df is not None:
+        output_path_2800 = os.path.join(args.output, 'aggregated_portfolio_comparison_2800HK.png')
+        plot_single_benchmark_comparison(benchmark_df, 'Benchmark (2800.HK)', '#000000',
+                                        conservative_df, aggressive_df, 
+                                        total_capital, output_path_2800)
+        
+        stats_list_2800 = []
         stats = calculate_portfolio_stats(benchmark_df, total_capital, 'Benchmark (2800.HK)')
         if stats:
-            stats_list.append(stats)
+            stats_list_2800.append(stats)
+        
+        if conservative_df is not None:
+            stats = calculate_portfolio_stats(conservative_df, total_capital, 'Conservative Portfolio')
+            if stats:
+                stats_list_2800.append(stats)
+        
+        if aggressive_df is not None:
+            stats = calculate_portfolio_stats(aggressive_df, total_capital, 'Aggressive Portfolio')
+            if stats:
+                stats_list_2800.append(stats)
+        
+        if stats_list_2800:
+            stats_df_2800 = pd.DataFrame(stats_list_2800)
+            stats_df_2800 = stats_df_2800.sort_values('Total_Return_%', ascending=False)
+            
+            print("\nPerformance Statistics (vs 2800.HK):")
+            print(f"\n{'Portfolio':<30} {'Initial':<15} {'Final':<15} {'Return %':<12} {'Ann. Ret %':<12} {'Max DD %':<12} {'Std Dev %':<12} {'Sharpe':<10}")
+            print("-" * 125)
+            for _, row in stats_df_2800.iterrows():
+                print(f"{row['Portfolio']:<30} ${row['Initial_Value']:>13,.0f} ${row['Final_Value']:>13,.0f} "
+                      f"{row['Total_Return_%']:>10.2f}% {row['Annualized_Return_%']:>10.2f}% "
+                      f"{row['Max_Drawdown_%']:>10.2f}% {row['Std_Dev_%']:>10.2f}% {row['Sharpe_Ratio']:>8.2f}")
+            
+            stats_path_2800 = os.path.join(args.output, 'aggregated_portfolio_stats_2800HK.csv')
+            stats_df_2800.to_csv(stats_path_2800, index=False)
+            print(f"\nStatistics saved to: {stats_path_2800}")
     
-    if conservative_df is not None:
-        stats = calculate_portfolio_stats(conservative_df, total_capital, 'Conservative Portfolio')
+    # 2. Generate comparison with Equal-Weight benchmark
+    print("\n" + "="*80)
+    print("Generating Comparison #2: Equal-Weight Benchmark")
+    print("="*80)
+    
+    if equal_weight_df is not None:
+        output_path_equal = os.path.join(args.output, 'aggregated_portfolio_comparison_equal_weight.png')
+        plot_single_benchmark_comparison(equal_weight_df, 'Equal-Weight Benchmark (5 stocks, 20% each)', '#2ca02c',
+                                        conservative_df, aggressive_df, 
+                                        total_capital, output_path_equal, value_column='Portfolio_Value')
+        
+        stats_list_equal = []
+        stats = calculate_portfolio_stats(equal_weight_df, total_capital, 'Equal-Weight Benchmark (5 stocks)', 'Portfolio_Value')
         if stats:
-            stats_list.append(stats)
+            stats_list_equal.append(stats)
+        
+        if conservative_df is not None:
+            stats = calculate_portfolio_stats(conservative_df, total_capital, 'Conservative Portfolio')
+            if stats:
+                stats_list_equal.append(stats)
+        
+        if aggressive_df is not None:
+            stats = calculate_portfolio_stats(aggressive_df, total_capital, 'Aggressive Portfolio')
+            if stats:
+                stats_list_equal.append(stats)
+        
+        if stats_list_equal:
+            stats_df_equal = pd.DataFrame(stats_list_equal)
+            stats_df_equal = stats_df_equal.sort_values('Total_Return_%', ascending=False)
+            
+            print("\nPerformance Statistics (vs Equal-Weight):")
+            print(f"\n{'Portfolio':<40} {'Initial':<15} {'Final':<15} {'Return %':<12} {'Ann. Ret %':<12} {'Max DD %':<12} {'Std Dev %':<12} {'Sharpe':<10}")
+            print("-" * 135)
+            for _, row in stats_df_equal.iterrows():
+                print(f"{row['Portfolio']:<40} ${row['Initial_Value']:>13,.0f} ${row['Final_Value']:>13,.0f} "
+                      f"{row['Total_Return_%']:>10.2f}% {row['Annualized_Return_%']:>10.2f}% "
+                      f"{row['Max_Drawdown_%']:>10.2f}% {row['Std_Dev_%']:>10.2f}% {row['Sharpe_Ratio']:>8.2f}")
+            
+            stats_path_equal = os.path.join(args.output, 'aggregated_portfolio_stats_equal_weight.csv')
+            stats_df_equal.to_csv(stats_path_equal, index=False)
+            print(f"\nStatistics saved to: {stats_path_equal}")
     
-    if aggressive_df is not None:
-        stats = calculate_portfolio_stats(aggressive_df, total_capital, 'Aggressive Portfolio')
-        if stats:
-            stats_list.append(stats)
+    # Print detailed comparison for both
+    print("\n" + "="*80)
+    print("Detailed Analysis")
+    print("="*80)
     
-    if stats_list:
-        stats_df = pd.DataFrame(stats_list)
-        stats_df = stats_df.sort_values('Total_Return_%', ascending=False)
-        
-        # Print table
-        print(f"\n{'Portfolio':<30} {'Initial':<15} {'Final':<15} {'Return %':<12} {'Ann. Ret %':<12} {'Max DD %':<12} {'Std Dev %':<12} {'Sharpe':<10}")
-        print("-" * 125)
-        for _, row in stats_df.iterrows():
-            print(f"{row['Portfolio']:<30} ${row['Initial_Value']:>13,.0f} ${row['Final_Value']:>13,.0f} "
-                  f"{row['Total_Return_%']:>10.2f}% {row['Annualized_Return_%']:>10.2f}% "
-                  f"{row['Max_Drawdown_%']:>10.2f}% {row['Std_Dev_%']:>10.2f}% {row['Sharpe_Ratio']:>8.2f}")
-        
-        # Save statistics to CSV
-        stats_path = os.path.join(args.output, 'aggregated_portfolio_stats.csv')
-        stats_df.to_csv(stats_path, index=False)
-        print(f"\nStatistics saved to: {stats_path}")
-        
-        # Print detailed comparison
-        print("\n" + "="*80)
-        print("Detailed Analysis")
-        print("="*80)
-        
-        for _, row in stats_df.iterrows():
+    if benchmark_df is not None and 'stats_df_2800' in locals():
+        print("\n--- VS 2800.HK BENCHMARK ---")
+        for _, row in stats_df_2800.iterrows():
+            print(f"\n{row['Portfolio']}:")
+            print(f"  Total Return:      {row['Total_Return_%']:>8.2f}%")
+            print(f"  Annualized Return: {row['Annualized_Return_%']:>8.2f}%")
+            print(f"  Max Gain:          {row['Max_Gain_%']:>8.2f}%")
+            print(f"  Max Loss:          {row['Max_Loss_%']:>8.2f}%")
+            print(f"  Max Drawdown:      {row['Max_Drawdown_%']:>8.2f}%")
+            print(f"  Std Dev (daily):   {row['Std_Dev_%']:>8.2f}%")
+            print(f"  Volatility:        {row['Volatility_%']:>8.2f}%")
+            print(f"  Sharpe Ratio:      {row['Sharpe_Ratio']:>8.2f}")
+            print(f"  Final Value:       ${row['Final_Value']:>,.2f}")
+    
+    if equal_weight_df is not None and 'stats_df_equal' in locals():
+        print("\n--- VS EQUAL-WEIGHT BENCHMARK ---")
+        for _, row in stats_df_equal.iterrows():
             print(f"\n{row['Portfolio']}:")
             print(f"  Total Return:      {row['Total_Return_%']:>8.2f}%")
             print(f"  Annualized Return: {row['Annualized_Return_%']:>8.2f}%")

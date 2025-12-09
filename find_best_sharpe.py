@@ -1,5 +1,5 @@
 """
-Find portfolios with the best Sharpe ratio
+Find strategies with the best Sharpe ratio
 Analyzes trading results and calculates Sharpe ratio for each strategy
 """
 

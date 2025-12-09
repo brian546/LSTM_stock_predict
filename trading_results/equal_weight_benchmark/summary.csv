@@ -1,0 +1,2 @@
+tickers,num_stocks,start_date,end_date,initial_capital,capital_per_stock,final_value,total_return_pct,annualized_return_pct,max_drawdown_pct,std_dev,trading_days
+"0002.HK, 0005.HK, 0288.HK, 2318.HK, 3690.HK",5,2022-10-27,2025-10-24,100000.0,20000.0,129499.19296333197,29.499192963331964,9.022593482628082,-15.47379524425292,0.810489913733716,735
