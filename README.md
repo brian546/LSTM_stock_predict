@@ -41,6 +41,23 @@ python trading.py --ticker 0005.HK --start 2022-10-01 --end 2022-12-01 --strateg
 
 Backtest summaries and trades are saved under `trading_results/`.
 
+
+Run the full end-to-end pipeline (inference + trading) with a single command:
+
+```bash
+python run_pipeline.py --ticker 0005.HK --start 2022-10-01 --end 2022-12-01 --strategy both
+```
+
+This will:
+- Run `inference.py` and save predictions to `predictions/{ticker}_predict.csv`.
+- Run `trading.py` using the generated predictions and save results to `trading_results/{ticker}_{strategy}/`.
+
+Useful options:
+- `--no_inference` — skip inference (use an existing prediction CSV instead).
+- `--no_trading` — run only inference (skip backtest).
+- `--rf_path <path>` — provide a Random Forest CSV to include RF predictions in the backtest.
+
+
 ---
 
 ## Repository Structure 🗂️
